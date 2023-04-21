@@ -1,0 +1,1 @@
+#### The following PowerShell script compares the hashes of all the contents in two separate zip files. It first extracts the zip files and lists all of their contents. Then, it calculates the hashes for each content and compares them. Finally, a report is generated with status verified.
