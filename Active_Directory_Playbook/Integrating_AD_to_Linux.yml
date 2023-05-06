@@ -1,0 +1,104 @@
+- hosts: all
+  become: yes
+  vars_prompt:
+    - name: "domain_pass"
+      prompt: "Enter Active Directory User Password"
+      private: yes
+  tasks:
+    - name: Verifying whether the AD has already been connected to the server.
+      command: realm list
+      register: realm_list_output
+    - name: Disconnecting from AD if already connected.
+      command: realm leave
+      when: realm_list_output.stdout != ""
+    - name: Verifying the joined status of AD once more.
+      command: realm list
+      register: realm_list_output
+    - name: Installing required packages
+      yum:
+        name:
+          - sssd
+          - realmd 
+          - oddjob 
+          - oddjob-mkhomedir
+          - adcli
+          - samba-common
+          - samba-common-tools
+          - krb5-workstation
+          - openldap-clients
+          - policycoreutils-python
+        state: latest
+      when: realm_list_output.stdout == ""
+    - name: Copying EPEL RPM Package
+      copy:
+       src: /tmp/epel-release-latest-7.noarch.rpm
+       dest: /tmp/epel-release-latest-7.noarch.rpm
+    - name: Installing EPEL-Repository
+      yum:
+	      name: /tmp/epel-release-latest-7.noarch.rpm
+        state: present
+    - name: Installing python-pip from RPM package
+      yum:
+	      name:
+          - python-pip
+        state: latest
+    - name: Upgrading the version of the pexpect module to v3.3
+      command: pip install pexpect==3.3    
+    - name: Configuring Nameserver 1
+      become: true
+      lineinfile:
+        path: /etc/resolv.conf
+        line: "nameserver 127.0.0.1"
+        state: present
+        regexp: '^nameserver\s+127\.0\.0\.1$'
+    - name: Configuring Nameserver 2
+      become: true
+      lineinfile:
+        path: /etc/resolv.conf
+        line: "nameserver 127.0.0.1"
+        state: present
+        regexp: '^nameserver\s+127\.0\.0\.1$'
+    - name: Configuring Search Domain
+      become: true
+      lineinfile:
+        path: /etc/resolv.conf
+        line: "search test.com"
+        state: present
+        regexp: '^search\s+test\.com$'   
+    - name: Joining the server to the AD domain.
+      become: true
+      expect:
+        command : /bin/bash -c "/usr/sbin/realm join -U <username> <domain_name>"
+        responses:
+          (?i)Password: "{{ domain_pass }}"
+      when: realm_list_output.stdout == ""
+    - name: Confirming that the AD has been successfully joined.
+      command: realm list
+      register: realm_verify
+    - name: Displaying a list of the joined AD(s).
+      debug:
+        msg: "{{ realm_verify.stdout }}"
+    - name: Enabling SSH Password Authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        insertafter: '#PasswordAuthentication yes'
+        line: "PasswordAuthentication yes"
+        state: present
+        regexp: '^PasswordAuthentication\syes'
+      when: realm_list_output.stdout == ""
+    - name: Restarting SSHD service
+      systemd:
+        name: sshd
+        state: restarted
+    - name: Configuring users login without using FQDN's
+      replace:
+        path: /etc/sssd/sssd.conf
+        regexp: '^use_fully_qualified_names\s*=\s*True$'
+        replace: 'use_fully_qualified_names = False'
+      when: realm_list_output.stdout == ""
+    - name: Providing access to all AD groups for login purposes
+      command: realm permit --groups "*" --all
+    - name: Restarting SSSD service
+      systemd:
+        name: sssd
+        state: restarted
